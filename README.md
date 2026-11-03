@@ -35,3 +35,7 @@ Requires the Xcode command line tools (Swift 5.9+), macOS 13+.
 - Network counts physical `en*` interfaces only, so VPN tunnels don't double count.
 - "Memory Used" defaults to Activity Monitor's definition (App + Wired + Compressed).
   The alternative (Active + Wired + Compressed) reads lower and is closer to the Usage app.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
