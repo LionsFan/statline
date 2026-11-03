@@ -15,5 +15,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build StatLine.app
         run: ./build.sh
+      - name: Check app bundle (icon, Info.plist, signature)
+        run: Tests/check-bundle.sh
+      - name: Run tests
+        run: Tests/run.sh
       - name: Smoke test (sample metrics)
         run: build/StatLine.app/Contents/MacOS/StatLine --sample
