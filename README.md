@@ -3,6 +3,8 @@
 A tiny macOS menu bar app that shows CPU, RAM and network in **one** compact two-row item
 (~90pt wide, or ~39pt in "Mini Bars" style), instead of three separate items.
 
+<p align="center"><img src="docs/screenshot.png" width="500" alt="StatLine in the menu bar with its dropdown open"></p>
+
 ```
 CPU   7%  ↓ 131K
 MEM  70%  ↑ 811K
@@ -11,6 +13,9 @@ MEM  70%  ↑ 811K
 Click it for details (CPU user/system, load average, memory breakdown, swap, pressure,
 network interface and totals) plus settings: style, memory formula, network units
 (bits/bytes), refresh interval, and Launch at Login.
+
+**Refresh** defaults to every 5 seconds. Pick 1s, 2s, 5s or 10s, or choose **Custom…** to
+enter any interval from 0.5 to 3600 seconds. Network speeds are averaged over the interval.
 
 ## Build & install
 

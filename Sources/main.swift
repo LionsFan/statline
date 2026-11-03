@@ -40,8 +40,14 @@ final class Prefs {
         set { d.set(newValue, forKey: "activeMemory") }
     }
     var interval: Double {
-        get { let v = d.double(forKey: "interval"); return v > 0 ? v : 2 }
-        set { d.set(newValue, forKey: "interval") }
+        get { let v = d.double(forKey: "interval"); return v > 0 ? Prefs.clampInterval(v) : 5 }
+        set { d.set(Prefs.clampInterval(newValue), forKey: "interval") }
+    }
+    static let intervalRange: ClosedRange<Double> = 0.5...3600
+    static func clampInterval(_ v: Double) -> Double { min(max(v, intervalRange.lowerBound), intervalRange.upperBound) }
+    /// "5s", "1.5s", "90s"
+    static func intervalLabel(_ v: Double) -> String {
+        v == v.rounded() ? "\(Int(v))s" : String(format: "%gs", v)
     }
 }
 
@@ -151,6 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var styleItems: [NSMenuItem] = []
     private var unitItems: [NSMenuItem] = []
     private var intervalItems: [NSMenuItem] = []
+    private let customIntervalItem = NSMenuItem(title: "Custom…", action: #selector(pickCustomInterval), keyEquivalent: "")
+    private static let intervalPresets: [Double] = [1, 2, 5, 10]
     private var memModeItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -163,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         restartTimer()
         if CommandLine.arguments.contains("--open-menu") {   // debug: pop the menu open to inspect it
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.item.button?.performClick(nil) }
+        }
+        if CommandLine.arguments.contains("--custom-refresh") {   // debug: show the custom refresh dialog
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.pickCustomInterval() }
         }
     }
 
@@ -226,11 +237,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             unitItems.append(i); unitMenu.addItem(i)
         }
         let intervalMenu = NSMenu()
-        for secs in [1.0, 2.0, 5.0] {
-            let i = NSMenuItem(title: "Every \(Int(secs))s", action: #selector(pickInterval(_:)), keyEquivalent: "")
+        for secs in Self.intervalPresets {
+            let i = NSMenuItem(title: "Every \(Prefs.intervalLabel(secs))", action: #selector(pickInterval(_:)), keyEquivalent: "")
             i.target = self; i.representedObject = secs
             intervalItems.append(i); intervalMenu.addItem(i)
         }
+        intervalMenu.addItem(.separator())
+        customIntervalItem.target = self
+        intervalMenu.addItem(customIntervalItem)
         let memMenu = NSMenu()
         for (title, active) in [("App + Wired + Compressed (Activity Monitor)", false), ("Active + Wired + Compressed (like Usage)", true)] {
             let i = NSMenuItem(title: title, action: #selector(pickMemMode(_:)), keyEquivalent: "")
@@ -257,7 +271,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         styleItems.forEach { $0.state = ($0.representedObject as? String) == prefs.style.rawValue ? .on : .off }
         unitItems.forEach { $0.state = ($0.representedObject as? Bool) == prefs.bits ? .on : .off }
         memModeItems.forEach { $0.state = ($0.representedObject as? Bool) == prefs.activeMemory ? .on : .off }
-        intervalItems.forEach { $0.state = ($0.representedObject as? Double) == prefs.interval ? .on : .off }
+        let interval = prefs.interval
+        intervalItems.forEach { $0.state = ($0.representedObject as? Double) == interval ? .on : .off }
+        let isCustom = !Self.intervalPresets.contains(interval)
+        customIntervalItem.state = isCustom ? .on : .off
+        customIntervalItem.title = isCustom ? "Custom (every \(Prefs.intervalLabel(interval)))…" : "Custom…"
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
@@ -315,6 +333,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func pickInterval(_ s: NSMenuItem) {
         if let v = s.representedObject as? Double { prefs.interval = v; restartTimer() }
+    }
+
+    @objc private func pickCustomInterval() {
+        let r = Prefs.intervalRange
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = String(format: "%g", prefs.interval)
+        field.placeholderString = "Seconds, e.g. 3 or 0.5"
+        var message = "How often should StatLine update? Enter seconds between \(String(format: "%g", r.lowerBound)) and \(String(format: "%g", r.upperBound))."
+        while true {
+            let a = NSAlert()
+            a.messageText = "Custom Refresh Interval"
+            a.informativeText = message
+            a.accessoryView = field
+            a.addButton(withTitle: "Set")
+            a.addButton(withTitle: "Cancel")
+            a.window.initialFirstResponder = field
+            NSApp.activate(ignoringOtherApps: true)   // menu bar apps aren't frontmost; bring the dialog forward
+            guard a.runModal() == .alertFirstButtonReturn else { return }
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: ",", with: ".")
+                .replacingOccurrences(of: "s", with: "")
+            if let v = Double(text), v.isFinite, r.contains(v) {
+                prefs.interval = v
+                restartTimer()
+                return
+            }
+            message = "“\(field.stringValue)” isn’t valid. Enter a number of seconds between \(String(format: "%g", r.lowerBound)) and \(String(format: "%g", r.upperBound))."
+        }
     }
 
     @objc private func toggleLogin() {
