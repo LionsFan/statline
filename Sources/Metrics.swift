@@ -39,13 +39,24 @@ struct NetSample {
 final class Sampler {
     private let host = mach_host_self()
     private var lastTicks: (user: UInt32, sys: UInt32, idle: UInt32, nice: UInt32)?
-    private var lastNet: (down: UInt64, up: UInt64, time: UInt64)?
+    private var lastNet: (counters: [String: NetMath.Counters], time: UInt64)?
+    private var lastSampleTime: UInt64 = 0
+
+    /// Readings over very short windows are noise: a few scheduler ticks can read as 50% or 100% CPU.
+    /// Calls closer together than this keep the previous values.
+    static let minInterval: Double = 0.25
 
     private(set) var cpu = CPUSample()
     private(set) var memory = MemorySample()
     private(set) var net = NetSample()
+    /// Number of samples actually taken (calls ignored by `minInterval` don't count).
+    private(set) var samplesTaken = 0
 
     func sample() {
+        let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+        if samplesTaken > 0, Double(now &- lastSampleTime) / 1e9 < Sampler.minInterval { return }
+        lastSampleTime = now
+        samplesTaken += 1
         sampleCPU()
         sampleMemory()
         sampleNetwork()
@@ -113,7 +124,7 @@ final class Sampler {
         var buf = [UInt8](repeating: 0, count: len)
         guard sysctl(&mib, 6, &buf, &len, nil, 0) == 0 else { return }
 
-        var down: UInt64 = 0, up: UInt64 = 0
+        var counters: [String: NetMath.Counters] = [:]
         var names: [String] = []
         buf.withUnsafeBytes { raw in
             var off = 0
@@ -129,8 +140,7 @@ final class Sampler {
                         if if_indextoname(UInt32(h2.ifm_index), &nameBuf) != nil {
                             let name = String(cString: nameBuf)
                             if name.hasPrefix("en") {
-                                down &+= h2.ifm_data.ifi_ibytes
-                                up &+= h2.ifm_data.ifi_obytes
+                                counters[name] = NetMath.Counters(down: h2.ifm_data.ifi_ibytes, up: h2.ifm_data.ifi_obytes)
                                 if h2.ifm_data.ifi_ibytes > 0 || h2.ifm_data.ifi_obytes > 0 { names.append(name) }
                             }
                         }
@@ -141,18 +151,36 @@ final class Sampler {
         }
 
         let now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        defer { lastNet = (down, up, now) }
+        defer { lastNet = (counters, now) }
         var n = NetSample()
-        n.totalDown = down
-        n.totalUp = up
-        n.interfaces = names
+        n.totalDown = counters.values.reduce(0) { $0 &+ $1.down }
+        n.totalUp = counters.values.reduce(0) { $0 &+ $1.up }
+        n.interfaces = names.sorted()
         if let prev = lastNet, now > prev.time {
             let dt = Double(now - prev.time) / 1e9
-            // If an interface disappeared the sum can drop; treat that interval as zero rather than negative.
-            n.downBytesPerSec = down >= prev.down ? Double(down - prev.down) / dt : 0
-            n.upBytesPerSec = up >= prev.up ? Double(up - prev.up) / dt : 0
+            let moved = NetMath.delta(from: prev.counters, to: counters)
+            n.downBytesPerSec = Double(moved.down) / dt
+            n.upBytesPerSec = Double(moved.up) / dt
         }
         net = n
+    }
+}
+
+enum NetMath {
+    struct Counters: Equatable { var down: UInt64; var up: UInt64 }
+
+    /// Bytes moved between two per-interface counter snapshots. Only interfaces present in both count:
+    /// an interface that just came up (e.g. Wi-Fi reconnecting) would otherwise add its whole since-boot
+    /// total as one huge spike, and one that went away would cancel out real traffic on the others.
+    /// A counter that went backwards (interface reset) contributes nothing.
+    static func delta(from prev: [String: Counters], to now: [String: Counters]) -> Counters {
+        var moved = Counters(down: 0, up: 0)
+        for (name, c) in now {
+            guard let p = prev[name] else { continue }
+            if c.down >= p.down { moved.down &+= c.down - p.down }
+            if c.up >= p.up { moved.up &+= c.up - p.up }
+        }
+        return moved
     }
 }
 
