@@ -17,6 +17,18 @@ network interface and totals) plus settings: style, memory formula, network unit
 **Refresh** defaults to every 5 seconds. Pick 1s, 2s, 5s or 10s, or choose **Custom…** to
 enter any interval from 0.5 to 3600 seconds. Network speeds are averaged over the interval.
 
+## Launch at Login
+
+On first launch from an Applications folder, StatLine asks whether to open at login. Your answer
+is remembered, and you can change it anytime in **Settings → Launch at Login**. If macOS needs
+approval, StatLine offers to open System Settings → General → Login Items.
+
+From the terminal (use the binary inside the installed app):
+
+```sh
+~/Applications/StatLine.app/Contents/MacOS/StatLine --login-item status   # or: on / off
+```
+
 ## Build & install
 
 Requires the Xcode command line tools (Swift 5.9+), macOS 13+.

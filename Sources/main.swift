@@ -18,6 +18,42 @@ if CommandLine.arguments.contains("--sample") {
     exit(0)
 }
 
+// `StatLine --login-item status|on|off` checks or changes Launch at Login from the terminal.
+// Run the binary inside the installed app (e.g. ~/Applications/StatLine.app/Contents/MacOS/StatLine).
+if let i = CommandLine.arguments.firstIndex(of: "--login-item") {
+    let svc = SMAppService.mainApp
+    let action = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "status"
+    do {
+        switch action {
+        case "on": try svc.register()
+        case "off": try svc.unregister()
+        default: break
+        }
+    } catch {
+        print("error: \(error.localizedDescription)")
+    }
+    if action == "on" || action == "off" { UserDefaults.standard.set(true, forKey: "askedLaunchAtLogin") }
+    print("Launch at Login: \(LoginItem.describe(svc.status)) (\(Bundle.main.bundlePath))")
+    exit(0)
+}
+
+enum LoginItem {
+    static func describe(_ s: SMAppService.Status) -> String {
+        switch s {
+        case .enabled: return "on"
+        case .requiresApproval: return "needs approval in System Settings → General → Login Items"
+        case .notRegistered: return "off"
+        case .notFound: return "not found"
+        @unknown default: return "unknown"
+        }
+    }
+    /// Only offer Launch at Login when running from an Applications folder, so a copy in build/ never registers itself.
+    static var isInstalled: Bool {
+        let path = Bundle.main.bundlePath
+        return path.hasPrefix("/Applications/") || path.hasPrefix(NSHomeDirectory() + "/Applications/")
+    }
+}
+
 enum Style: String, CaseIterable {
     case labels = "Labels"   // CPU 6%  ↓8.1M / MEM 58% ↑1.1M
     case bars = "Bars"       // two mini bars + network
@@ -38,6 +74,11 @@ final class Prefs {
     var activeMemory: Bool {
         get { d.bool(forKey: "activeMemory") }
         set { d.set(newValue, forKey: "activeMemory") }
+    }
+    /// Whether the first-launch "Open at Login?" prompt has been answered.
+    var askedLaunchAtLogin: Bool {
+        get { d.bool(forKey: "askedLaunchAtLogin") }
+        set { d.set(newValue, forKey: "askedLaunchAtLogin") }
     }
     var interval: Double {
         get { let v = d.double(forKey: "interval"); return v > 0 ? Prefs.clampInterval(v) : 5 }
@@ -175,6 +216,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if CommandLine.arguments.contains("--custom-refresh") {   // debug: show the custom refresh dialog
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.pickCustomInterval() }
         }
+        let forcePrompt = CommandLine.arguments.contains("--login-prompt")   // debug: show the first-launch prompt
+        if forcePrompt || (!prefs.askedLaunchAtLogin && LoginItem.isInstalled && SMAppService.mainApp.status != .enabled) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.askLaunchAtLogin() }
+        }
+    }
+
+    /// One-time prompt on first launch. Either answer is remembered; the Settings toggle stays available.
+    private func askLaunchAtLogin() {
+        let a = NSAlert()
+        a.messageText = "Open StatLine at Login?"
+        a.informativeText = "StatLine can start automatically when you log in, so CPU, memory and network are always in your menu bar.\n\nYou can change this anytime in StatLine → Settings → Launch at Login."
+        a.addButton(withTitle: "Open at Login")
+        a.addButton(withTitle: "Not Now")
+        NSApp.activate(ignoringOtherApps: true)
+        let answer = a.runModal()
+        prefs.askedLaunchAtLogin = true
+        if answer == .alertFirstButtonReturn { setLaunchAtLogin(true) }
+    }
+
+    private func setLaunchAtLogin(_ on: Bool) {
+        prefs.askedLaunchAtLogin = true   // a manual choice counts as answering the first-launch prompt
+        let svc = SMAppService.mainApp
+        do {
+            if on { try svc.register() } else { try svc.unregister() }
+        } catch {
+            showLoginItemsHelp(title: "Couldn't change Launch at Login",
+                               text: "\(error.localizedDescription)\n\nYou can add StatLine yourself: System Settings → General → Login Items → Open at Login → +.")
+            return
+        }
+        if on && svc.status == .requiresApproval {
+            showLoginItemsHelp(title: "Allow StatLine in Login Items",
+                               text: "macOS needs your approval before StatLine can open at login. Turn StatLine on in System Settings → General → Login Items.")
+        }
+    }
+
+    private func showLoginItemsHelp(title: String, text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.addButton(withTitle: "Open Login Items")
+        a.addButton(withTitle: "Close")
+        NSApp.activate(ignoringOtherApps: true)
+        if a.runModal() == .alertFirstButtonReturn { SMAppService.openSystemSettingsLoginItems() }
     }
 
     private func restartTimer() {
@@ -276,7 +360,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let isCustom = !Self.intervalPresets.contains(interval)
         customIntervalItem.state = isCustom ? .on : .off
         customIntervalItem.title = isCustom ? "Custom (every \(Prefs.intervalLabel(interval)))…" : "Custom…"
-        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        let login = SMAppService.mainApp.status
+        loginItem.state = login == .enabled ? .on : login == .requiresApproval ? .mixed : .off
+        loginItem.title = login == .requiresApproval ? "Launch at Login (needs approval)" : "Launch at Login"
+        loginItem.isEnabled = LoginItem.isInstalled
+        loginItem.toolTip = LoginItem.isInstalled ? nil : "Move StatLine to an Applications folder to enable this."
     }
 
     func menuDidClose(_ m: NSMenu) { menuOpen = false }
@@ -364,14 +452,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func toggleLogin() {
-        let svc = SMAppService.mainApp
-        do {
-            if svc.status == .enabled { try svc.unregister() } else { try svc.register() }
-        } catch {
-            let a = NSAlert()
-            a.messageText = "Couldn't change Launch at Login"
-            a.informativeText = "\(error.localizedDescription)\n\nYou can add StatLine manually in System Settings → General → Login Items."
-            a.runModal()
+        switch SMAppService.mainApp.status {
+        case .enabled: setLaunchAtLogin(false)
+        case .requiresApproval: SMAppService.openSystemSettingsLoginItems()
+        default: setLaunchAtLogin(true)
         }
     }
 }
