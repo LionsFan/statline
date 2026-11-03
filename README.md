@@ -1,4 +1,6 @@
-# StatLine
+<p align="center"><img src="docs/icon.png" width="128" alt="StatLine icon"></p>
+
+<h1 align="center">StatLine</h1>
 
 A tiny macOS menu bar app that shows CPU, RAM and network in **one** compact two-row item
 (~90pt wide, or ~39pt in "Mini Bars" style), instead of three separate items.
@@ -27,6 +29,12 @@ Requires the Xcode command line tools (Swift 5.9+), macOS 13+.
 ```
 
 `StatLine --sample` prints a few readings to the terminal.
+
+## App icon
+
+The icon is drawn in code by `design/render.swift`. To regenerate `Resources/AppIcon.icns`
+and `docs/icon.png` after editing it, run `design/make-icon.sh`. It also writes a review sheet
+to `build/icon-review.png`.
 
 ## Notes
 
