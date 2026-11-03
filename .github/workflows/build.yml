@@ -1,0 +1,19 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build StatLine.app
+        run: ./build.sh
+      - name: Smoke test (sample metrics)
+        run: build/StatLine.app/Contents/MacOS/StatLine --sample
