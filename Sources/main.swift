@@ -210,6 +210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         sampler.sample()            // prime deltas
         restartTimer()
+        // The first timed reading is a full interval away, so take a real one after a second.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
         if CommandLine.arguments.contains("--open-menu") {   // debug: pop the menu open to inspect it
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in self?.item.button?.performClick(nil) }
         }
